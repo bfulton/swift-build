@@ -41,6 +41,14 @@ extension CommandBuildContext {
                 assertionFailure("GetWindowsDirectoryW should not fail")
             }
             #endif
+        } else {
+            // Give the compiler and linker drivers a temporary directory inside the build's object root, as on Windows
+            // above. Task environments are constructed rather than inherited, so without this TMPDIR is unset, and on
+            // macOS a driver's temporary directory (swift-driver's TemporaryDirectory.XXXXXX, holding its response files
+            // and temporary outputs) falls back to the per-user temporary directory that confstr(_CS_DARWIN_USER_TEMP_DIR)
+            // names - shared with every process the user runs, and not writable by a build running under a sandbox that
+            // grants it only its own TMPDIR. On Linux it falls back to /tmp.
+            env["TMPDIR"] = scope.evaluate(BuiltinMacros.OBJROOT).str
         }
         return env
     }

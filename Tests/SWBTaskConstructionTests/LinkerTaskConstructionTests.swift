@@ -239,6 +239,61 @@ fileprivate struct LinkerTaskConstructionTests: CoreBasedTests {
 
     }
 
+    /// The compiler and linker drivers get a temporary directory inside the build's object root on every host, not only
+    /// on Windows: a task's environment is constructed rather than inherited, and without TMPDIR swift-driver puts its
+    /// temporary directory in the per-user temporary directory (macOS) or /tmp (Linux), outside the build.
+    @Test(.requireSDKs(.host))
+    func driverTaskTemporaryDirectoryIsInObjectRoot() async throws {
+        let testProject = TestProject(
+            "aProject",
+            groupTree: TestGroup(
+                "SomeFiles",
+                children: [
+                    TestFile("s.swift"),
+                ]),
+            buildConfigurations: [
+                TestBuildConfiguration("Debug", buildSettings: [
+                    "PRODUCT_NAME": "$(TARGET_NAME)",
+                    "SWIFT_EXEC": try await swiftCompilerPath.str,
+                    "SWIFT_VERSION": try await swiftVersion,
+                    "LINKER_DRIVER": "swiftc",
+                ]),
+            ],
+            targets: [
+                TestStandardTarget(
+                    "Library",
+                    type: .dynamicLibrary,
+                    buildConfigurations: [
+                        TestBuildConfiguration("Debug", buildSettings: [:]),
+                    ],
+                    buildPhases: [
+                        TestSourcesBuildPhase(["s.swift"]),
+                    ]
+                ),
+            ])
+        let core = try await getCore()
+        let tester = try TaskConstructionTester(core, testProject)
+        let OBJROOT = tester.workspace.projects[0].sourceRoot.join("build").str
+
+        await tester.checkBuild(BuildParameters(configuration: "Debug"), runDestination: .host) { results in
+            results.checkNoDiagnostics()
+            results.checkTask(.matchRuleType("Ld")) { task in
+                task.checkEnvironment(["TMPDIR": .equal(OBJROOT)])
+            }
+            results.checkTask(.matchRuleType("SwiftDriver Compilation")) { task in
+                task.checkEnvironment(["TMPDIR": .equal(OBJROOT)])
+            }
+        }
+
+        // Moved with the object root.
+        await tester.checkBuild(BuildParameters(configuration: "Debug", overrides: ["OBJROOT": "/tmp/elsewhere"]), runDestination: .host) { results in
+            results.checkNoDiagnostics()
+            results.checkTask(.matchRuleType("Ld")) { task in
+                task.checkEnvironment(["TMPDIR": .equal("/tmp/elsewhere")])
+            }
+        }
+    }
+
     @Test(.requireSDKs(.host))
     func dynamicLibraryWithNoSourcesButStaticLibrariesInFrameworksPhase_Xcode() async throws {
         let testProject = try await TestProject(
