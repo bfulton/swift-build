@@ -16,6 +16,12 @@ import SWBUtil
 extension CommandBuildContext {
     var toolchainHostEnvironment: Environment {
         var env = Environment()
+
+        // Task environments are constructed rather than inherited, so without this the compiler and linker drivers
+        // would put their temporary files outside the build: in the per-user temporary directory on macOS, /tmp on Linux.
+        let objroot = scope.evaluate(BuiltinMacros.OBJROOT).str
+        env["TMPDIR"] = objroot
+
         if producer.hostOperatingSystem == .windows {
             // On Windows, the Swift compiler needs additional entries in PATH to find its dependent DLLs, as there is no rpath equivalent.
             // The way this is computed is a little fragile, since when targeting Android we synthesize a toolchain pointing into the NDK,
@@ -29,8 +35,8 @@ extension CommandBuildContext {
                 break
             }
 
-            for tmpdir in ["TMP", "TEMP", "TMPDIR"] as [EnvironmentKey] {
-                env[tmpdir] = scope.evaluate(BuiltinMacros.OBJROOT).str
+            for tmpdir in ["TMP", "TEMP"] as [EnvironmentKey] {
+                env[tmpdir] = objroot
             }
 
             #if os(Windows)
@@ -41,14 +47,6 @@ extension CommandBuildContext {
                 assertionFailure("GetWindowsDirectoryW should not fail")
             }
             #endif
-        } else {
-            // Give the compiler and linker drivers a temporary directory inside the build's object root, as on Windows
-            // above. Task environments are constructed rather than inherited, so without this TMPDIR is unset, and on
-            // macOS a driver's temporary directory (swift-driver's TemporaryDirectory.XXXXXX, holding its response files
-            // and temporary outputs) falls back to the per-user temporary directory that confstr(_CS_DARWIN_USER_TEMP_DIR)
-            // names - shared with every process the user runs, and not writable by a build running under a sandbox that
-            // grants it only its own TMPDIR. On Linux it falls back to /tmp.
-            env["TMPDIR"] = scope.evaluate(BuiltinMacros.OBJROOT).str
         }
         return env
     }
